@@ -1,0 +1,60 @@
+#!/bin/bash
+
+set -e
+# set -x
+
+# check bash version
+higher=$(echo -e "$BASH_VERSION\n4.2" | sort -Vr | head -1)
+if [ "$higher" = "4.2" ]; then
+    echo Bash "$BASH_VERSION" is unsupported. Please upgrade to 4.2 or newer >&2
+    exit 1
+fi
+
+# check arguments
+if [ -z "$1" ]; then
+    echo usage: "$(basename "$0")" target_config
+    exit 1
+fi
+
+# pushd into envman dir
+path=$(dirname "$0")
+pushd "$path" >/dev/null
+
+touch .vars
+source .vars
+
+source choose_file.sh
+
+# find cred configs in envman dir
+mongo_configs=$(find ./data/mongo_om/*.yml | sort -r)
+pcf_configs=$(find ./data/pcf/*.yml)
+
+# find target_config in local dir
+popd >/dev/null
+target_config=$(readlink -e "$1")
+pushd "$path" >/dev/null
+
+# git branches need to be retrieved from the local dir
+popd >/dev/null
+git_branches=$(git branch --sort -committerdate 2>/dev/null | tr "* " " " || echo "")
+pushd "$path" >/dev/null
+
+choose_file "$mongo_configs" ":: Select MongoDB Ops Manager:" mongo
+echo mongo="$selection" >.vars
+
+choose_file "$pcf_configs" ":: Select PCF Ops Manager:" pcf
+echo pcf="$selection" >>.vars
+
+if [ -n "$git_branches" ]; then
+    choose_file "$git_branches" ":: Select Git branch:" branch
+    echo branch="$selection" >>.vars
+else
+    echo :: Could not list available git branches, please enter the branch name by hand
+    read -p "Enter branch name: " -e -i master -r branch
+fi
+
+yq w -i "$target_config" git-branch-name $branch
+
+yq m -x -i "$target_config" $mongo $pcf
+
+echo Wrote new config
